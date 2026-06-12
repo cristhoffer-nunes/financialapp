@@ -1,0 +1,6 @@
+{
+  "name": "Controle Financeiro",
+  "description": "Um aplicativo intuitivo de controle financeiro pessoal para cadastrar receitas e despesas, categorizar gastos e gerenciar metas mensais de economia com gráficos completos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
