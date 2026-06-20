@@ -4,8 +4,12 @@
  */
 
 import React, { useState } from 'react';
-import { Transaction, Category } from '../types';
-import { DEFAULT_CATEGORIES, getCategoryById, formatCurrency } from '../utils';
+import { Category, Transaction } from '../types';
+import { DEFAULT_CATEGORIES, getCategoryById } from '../domain/entities/Category';
+import { FinanceService } from '../domain/services/FinanceService';
+import { formatCurrency } from '../utils';
+import { CategoryIcon } from '../presentation/components/CategoryIcon';
+import { BarChart3, PieChart } from 'lucide-react';
 
 interface AnalyticsProps {
   transactions: Transaction[];
@@ -29,38 +33,30 @@ export default function Analytics({
   const currentExpenses = currentMonthTransactions.filter(t => t.type === 'despesa');
   const totalExpenseAmount = currentExpenses.reduce((sum, t) => sum + t.amount, 0);
 
-  // Group current expenses by category
-  const expenseByCategory = currentExpenses.reduce((acc, t) => {
-    acc[t.categoryId] = (acc[t.categoryId] || 0) + t.amount;
-    return acc;
-  }, {} as Record<string, number>);
-
-  // Cover empty state
+  // Group current expenses by category using the domain service!
+  const groupedExpenses = FinanceService.groupExpensesByCategory(transactions, selectedMonth);
   const hasExpenses = totalExpenseAmount > 0;
 
-  // Convert to array and sort descending
-  const donutData = Object.entries(expenseByCategory).map(([catId, amount]) => {
-    const cat = getCategoryById(catId, categories);
-    const pct = totalExpenseAmount > 0 ? (amount / totalExpenseAmount) * 100 : 0;
+  // Convert to array with visual details and sort descending
+  const donutData = groupedExpenses.map((group) => {
+    const cat = getCategoryById(group.categoryId, categories);
     return {
-      catId,
+      catId: group.categoryId,
       name: cat.name,
       icon: cat.icon,
-      color: cat.color,
-      amount,
-      pct
+      color: cat.color, // uses our monochromatic colors defined in the Category entity
+      amount: group.amount,
+      pct: group.percentage
     };
-  }).sort((a, b) => b.amount - a.amount);
+  });
 
   // Math for SVG Donut (using stroke-dasharray technique)
-  // Center: 100, 100; Radius: 65
   const radius = 65;
   const circumference = 2 * Math.PI * radius; // Approx 408.4
 
   let accumulatedPercent = 0;
 
   // 2. Calculations for ALL MONTHS (Historical Trend Chart: Receita vs Despesa)
-  // Let's grab all transactions and group by Month
   const monthlyTotals: Record<string, { receita: number; despesa: number }> = {};
   
   // Ensure we at least have May and June represented
@@ -96,13 +92,16 @@ export default function Analytics({
     <div className="space-y-6">
       {/* 1. Category Chart */}
       <div id="category-chart-card" className="bg-white rounded-2xl p-5 shadow-xs border border-slate-100">
-        <h3 className="text-xs font-bold uppercase text-slate-900 tracking-wider mb-1">Distribuição de Gastos</h3>
+        <div className="flex items-center gap-2 mb-1">
+          <PieChart className="w-4 h-4 text-slate-800" />
+          <h3 className="text-xs font-bold uppercase text-slate-900 tracking-wider">Distribuição de Gastos</h3>
+        </div>
         <p className="text-[11px] text-slate-400 mb-5">Categorias de despesas em {selectedMonth}</p>
 
         {!hasExpenses ? (
           <div className="flex flex-col items-center justify-center p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-            <span className="text-3xl mb-2">📊</span>
-            <p className="text-xs font-medium text-slate-600">Nenhum gasto cadastrado</p>
+            <PieChart className="w-8 h-8 text-slate-300 mb-2" />
+            <p className="text-xs font-semibold text-slate-600">Nenhum gasto cadastrado</p>
             <p className="text-[10px] text-slate-400 mt-1 max-w-[200px]">Adicione despesas para começarmos a traçar sua distribuição financeira.</p>
           </div>
         ) : (
@@ -159,8 +158,8 @@ export default function Analytics({
               <div className="absolute inset-0 flex flex-col justify-center items-center pointer-events-none text-center">
                 {selectedCategoryDetail ? (
                   <>
-                    <span className="text-2xl">{selectedCategoryDetail.icon}</span>
-                    <span className="text-xs font-semibold text-slate-500 mt-0.5 truncate max-w-[90px]">
+                    <CategoryIcon name={selectedCategoryDetail.icon} className="w-5 h-5 text-slate-800" />
+                    <span className="text-xs font-semibold text-slate-500 mt-1 truncate max-w-[90px]">
                       {selectedCategoryDetail.name}
                     </span>
                     <span className="text-sm font-bold text-slate-800">
@@ -169,8 +168,8 @@ export default function Analytics({
                   </>
                 ) : (
                   <>
-                    <span className="text-xs font-medium text-slate-400">Total</span>
-                    <span className="text-base font-bold text-slate-800">
+                    <span className="text-[10px] uppercase font-bold text-slate-400">Total</span>
+                    <span className="text-sm font-bold text-rose-600">
                       {formatCurrency(totalExpenseAmount)}
                     </span>
                   </>
@@ -179,15 +178,15 @@ export default function Analytics({
             </div>
 
             {/* Legend checklist with values */}
-            <div className="space-y-2 mt-2 md:mt-0">
+            <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1 no-scrollbar">
               {donutData.map((slice) => (
                 <button
                   key={slice.catId}
                   id={`legend-btn-${slice.catId}`}
-                  className={`w-full flex items-center justify-between p-2 rounded-xl transition-all duration-200 text-left ${
+                  className={`w-full flex items-center justify-between p-2 rounded-xl transition-all duration-200 text-left border ${
                     selectedCategorySlice === slice.catId 
-                      ? 'bg-slate-50 border border-slate-200/60 shadow-xs' 
-                      : 'border border-transparent hover:bg-slate-50/50'
+                      ? 'bg-slate-150 border-slate-300 shadow-xs' 
+                      : 'border-transparent hover:bg-slate-50'
                   }`}
                   onClick={() => {
                     setSelectedCategorySlice(
@@ -197,20 +196,19 @@ export default function Analytics({
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <div 
-                      className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
-                      style={{ backgroundColor: `${slice.color}15`, color: slice.color }}
+                      className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-slate-100 border border-slate-200 text-slate-800"
                     >
-                      <span className="text-sm">{slice.icon}</span>
+                      <CategoryIcon name={slice.icon} className="w-4 h-4 text-slate-800" />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-xs font-medium text-slate-800 truncate">{slice.name}</p>
-                      <p className="text-[10px] text-slate-400 font-medium">
-                        {slice.pct.toFixed(1)}% de despesas
+                      <p className="text-xs font-bold text-slate-800 truncate">{slice.name}</p>
+                      <p className="text-[10px] text-slate-400 font-bold">
+                        {slice.pct.toFixed(1)}%
                       </p>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-xs font-semibold text-slate-800 border-none">
+                    <p className="text-xs font-extrabold text-rose-600 border-none">
                       {formatCurrency(slice.amount)}
                     </p>
                   </div>
@@ -223,7 +221,10 @@ export default function Analytics({
 
       {/* 2. Historic Trends Chart */}
       <div id="trend-chart-card" className="bg-white rounded-2xl p-5 shadow-xs border border-slate-100 font-sans">
-        <h3 className="text-xs font-bold uppercase text-slate-900 tracking-wider mb-1">Histórico Mensal</h3>
+        <div className="flex items-center gap-2 mb-1">
+          <BarChart3 className="w-4 h-4 text-slate-800" />
+          <h3 className="text-xs font-bold uppercase text-slate-900 tracking-wider">Histórico Mensal</h3>
+        </div>
         <p className="text-[11px] text-slate-400 mb-6">Comparação do fluxo de caixa recente</p>
 
         <div className="relative pt-2 pb-2 h-44">
@@ -265,28 +266,28 @@ export default function Analytics({
                   onMouseEnter={() => setHoveredTrendMonth(m)}
                   onMouseLeave={() => setHoveredTrendMonth(null)}
                 >
-                  {/* Income Bar (Emerald Accent) */}
+                  {/* Income Bar (Green - Emerald) */}
                   <rect
                     x={rx}
                     y={ry}
                     width={barWidth}
                     height={Math.max(rHeight, 1)}
-                    rx="4"
-                    fill="#10b981" // Emerald
-                    className="transition-all duration-300 hover:fill-emerald-450"
+                    rx="2"
+                    fill="#10b981" // Emerald-500
+                    className="transition-all duration-300"
                     opacity={isHovered ? 1 : 0.85}
                   />
 
-                  {/* Expense Bar (Rose Accent) */}
+                  {/* Expense Bar (Red - Rose) */}
                   <rect
                     x={dx}
                     y={dy}
                     width={barWidth}
                     height={Math.max(dHeight, 1)}
-                    rx="4"
-                    fill="#f43f5e" // Rose
-                    className="transition-all duration-300 hover:fill-rose-450"
-                    opacity={isHovered ? 1 : 0.85}
+                    rx="2"
+                    fill="#f43f5e" // Rose-500
+                    className="transition-all duration-300"
+                    opacity={isHovered ? 1 : 0.8}
                   />
 
                   {/* X-Axis labels (Short months names) */}
@@ -294,7 +295,7 @@ export default function Analytics({
                     x={xCenter}
                     y="138"
                     textAnchor="middle"
-                    className="text-[10px] font-bold fill-slate-400"
+                    className="text-[10px] font-extrabold fill-slate-400 uppercase tracking-wider"
                   >
                     {m === '2026-05' ? 'Mai' : m === '2026-06' ? 'Jun' : m.split('-')[1]}
                   </text>
@@ -305,19 +306,19 @@ export default function Analytics({
 
           {/* Hover Overlay Legend */}
           {hoveredTrendMonth && (
-            <div className="absolute top-2 left-[50%] transform -translate-x-1/2 bg-slate-900 text-white rounded-xl shadow-lg border border-slate-800 p-2.5 flex items-center gap-4 text-xs pointer-events-none z-10">
+            <div className="absolute top-2 left-[50%] transform -translate-x-1/2 bg-black text-white rounded-xl shadow-lg p-2.5 flex items-center gap-4 text-[10px] uppercase font-bold tracking-wider pointer-events-none z-10">
               <div>
-                <p className="text-[10px] text-slate-450 font-semibold mb-0.5">
-                  {hoveredTrendMonth === '2026-05' ? 'Maio' : hoveredTrendMonth === '2026-06' ? 'Junho' : hoveredTrendMonth}
+                <p className="text-slate-400 font-extrabold mb-1">
+                  {hoveredTrendMonth === '2026-05' ? 'Maio 2026' : hoveredTrendMonth === '2026-06' ? 'Junho 2026' : hoveredTrendMonth}
                 </p>
                 <div className="flex gap-3">
                   <span className="flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-450" />
-                    Receitas: <strong className="text-white">{formatCurrency(monthlyTotals[hoveredTrendMonth].receita)}</strong>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    Rec: <strong className="text-white">{formatCurrency(monthlyTotals[hoveredTrendMonth].receita)}</strong>
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-rose-450" />
-                    Gastos: <strong className="text-white">{formatCurrency(monthlyTotals[hoveredTrendMonth].despesa)}</strong>
+                    <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+                    Desp: <strong className="text-white">{formatCurrency(monthlyTotals[hoveredTrendMonth].despesa)}</strong>
                   </span>
                 </div>
               </div>
@@ -329,11 +330,11 @@ export default function Analytics({
         <div className="flex justify-center items-center gap-6 mt-2 pt-2 border-t border-slate-50">
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-md bg-emerald-500" />
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Receitas</span>
+            <span className="text-[9px] font-extrabold uppercase tracking-widest text-slate-400">Receitas</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-md bg-rose-500" />
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Despesas</span>
+            <span className="text-[9px] font-extrabold uppercase tracking-widest text-slate-400">Despesas</span>
           </div>
         </div>
       </div>

@@ -31,7 +31,9 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     type: 'despesa',
     categoryId: 'alimentacao',
     date: '2026-06-12',
-    notes: 'Jantar de sexta com amigos'
+    notes: 'Jantar de sexta com amigos',
+    paymentMethod: 'debito',
+    status: 'pago'
   },
   {
     id: 't2',
@@ -39,7 +41,9 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     amount: 4200.00,
     type: 'receita',
     categoryId: 'salario',
-    date: '2026-06-10'
+    date: '2026-06-10',
+    paymentMethod: 'debito',
+    status: 'pago'
   },
   {
     id: 't3',
@@ -48,7 +52,9 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     type: 'despesa',
     categoryId: 'transporte',
     date: '2026-06-08',
-    notes: 'Tanque cheio'
+    notes: 'Tanque cheio',
+    paymentMethod: 'debito',
+    status: 'pago'
   },
   {
     id: 't4',
@@ -56,7 +62,9 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     amount: 412.50,
     type: 'despesa',
     categoryId: 'supermercado',
-    date: '2026-06-05'
+    date: '2026-06-05',
+    paymentMethod: 'debito',
+    status: 'pago'
   },
   {
     id: 't5',
@@ -64,7 +72,9 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     amount: 150.00,
     type: 'receita',
     categoryId: 'outros_receita',
-    date: '2026-06-02'
+    date: '2026-06-02',
+    paymentMethod: 'debito',
+    status: 'pago'
   },
   {
     id: 't6',
@@ -72,7 +82,9 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     amount: 1200.00,
     type: 'despesa',
     categoryId: 'moradia',
-    date: '2026-06-01'
+    date: '2026-06-01',
+    paymentMethod: 'debito',
+    status: 'pago'
   },
   {
     id: 't7',
@@ -80,7 +92,9 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     amount: 199.00,
     type: 'despesa',
     categoryId: 'educacao',
-    date: '2026-06-01'
+    date: '2026-06-01',
+    paymentMethod: 'debito',
+    status: 'pago'
   },
   {
     id: 't8',
@@ -88,7 +102,9 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     amount: 950.00,
     type: 'receita',
     categoryId: 'freelancer',
-    date: '2026-05-28'
+    date: '2026-05-28',
+    paymentMethod: 'debito',
+    status: 'pago'
   },
   {
     id: 't9',
@@ -96,7 +112,9 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     amount: 85.00,
     type: 'despesa',
     categoryId: 'saude',
-    date: '2026-05-25'
+    date: '2026-05-25',
+    paymentMethod: 'debito',
+    status: 'pago'
   },
   {
     id: 't10',
@@ -104,7 +122,9 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     amount: 62.00,
     type: 'despesa',
     categoryId: 'lazer',
-    date: '2026-05-22'
+    date: '2026-05-22',
+    paymentMethod: 'debito',
+    status: 'pago'
   },
   {
     id: 't11',
@@ -112,7 +132,9 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     amount: 215.30,
     type: 'despesa',
     categoryId: 'supermercado',
-    date: '2026-05-18'
+    date: '2026-05-18',
+    paymentMethod: 'debito',
+    status: 'pago'
   },
   {
     id: 't12',
@@ -120,7 +142,9 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     amount: 4200.00,
     type: 'receita',
     categoryId: 'salario',
-    date: '2026-05-10'
+    date: '2026-05-10',
+    paymentMethod: 'debito',
+    status: 'pago'
   },
   {
     id: 't13',
@@ -128,7 +152,9 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     amount: 245.00,
     type: 'despesa',
     categoryId: 'moradia',
-    date: '2026-05-05'
+    date: '2026-05-05',
+    paymentMethod: 'debito',
+    status: 'pago'
   },
   {
     id: 't14',
@@ -136,7 +162,9 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     amount: 112.40,
     type: 'receita',
     categoryId: 'investimentos',
-    date: '2026-05-03'
+    date: '2026-05-03',
+    paymentMethod: 'debito',
+    status: 'pago'
   }
 ];
 
@@ -201,8 +229,43 @@ export const getAvailableMonths = (transactions: Transaction[]): string[] => {
 
 // Portuguese month names mapping
 export const getMonthName = (yearMonthStr: string): string => {
+  if (!yearMonthStr) return '';
   const [year, month] = yearMonthStr.split('-');
   const dateObj = new Date(Number(year), Number(month) - 1, 1);
   const name = dateObj.toLocaleDateString('pt-BR', { month: 'long' });
   return name.charAt(0).toUpperCase() + name.slice(1) + ' de ' + year;
+};
+
+// Serialize and Deserialize helpers for due dates inside the notes field to enable database-less synchronization
+export interface NotesWithMetadata {
+  notesText: string;
+  dueDate?: string;
+}
+
+export const parseNotesWithMetadata = (serializedNotes: string | undefined): NotesWithMetadata => {
+  if (!serializedNotes) return { notesText: '' };
+  if (serializedNotes.startsWith('{"notesText":') || serializedNotes.startsWith('{"text":')) {
+    try {
+      const parsed = JSON.parse(serializedNotes);
+      return {
+        notesText: parsed.notesText || parsed.text || '',
+        dueDate: parsed.dueDate
+      };
+    } catch {
+      // fallback
+    }
+  }
+  // Try pattern matching [VENCIMENTO:YYYY-MM-DD]
+  const match = serializedNotes.match(/\[VENCIMENTO:([\d\-]+)\]/);
+  if (match) {
+    const dueDate = match[1];
+    const notesText = serializedNotes.replace(/\[VENCIMENTO:([\d\-]+)\]/, '').trim();
+    return { notesText, dueDate };
+  }
+  return { notesText: serializedNotes };
+};
+
+export const serializeNotesWithMetadata = (notesText: string, dueDate?: string): string => {
+  if (!dueDate) return notesText;
+  return JSON.stringify({ notesText, dueDate });
 };

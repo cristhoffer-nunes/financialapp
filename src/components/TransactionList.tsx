@@ -4,405 +4,405 @@
  */
 
 import React, { useState } from 'react';
-import { Transaction, Category, TransactionType } from '../types';
-import { DEFAULT_CATEGORIES, getCategoryById, formatCurrency, formatDateFriendly } from '../utils';
+import { Category, Transaction, BankAccount, CreditCard } from '../types';
+import { DEFAULT_CATEGORIES, getCategoryById } from '../domain/entities/Category';
+import { formatCurrency } from '../utils';
+import { CategoryIcon } from '../presentation/components/CategoryIcon';
+import { 
+  Search, 
+  Trash2, 
+  Edit3, 
+  SlidersHorizontal,
+  Calendar,
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  ArrowDownCircle,
+  ArrowUpCircle,
+  CreditCard as CardIcon,
+  HelpCircle,
+  Receipt,
+  FileSpreadsheet
+} from 'lucide-react';
 
 interface TransactionListProps {
   transactions: Transaction[];
+  accounts: BankAccount[];
+  creditCards: CreditCard[];
   onEdit: (transaction: Transaction) => void;
   onDelete: (id: string) => void;
+  onToggleStatus: (id: string) => void;
+  onReprogramDate: (id: string, newDate: string) => void;
+  selectedMonth: string;
   categories?: Category[];
 }
 
-type SortOption = 'newest' | 'oldest' | 'highest' | 'lowest';
+type FilterMethod = 'all' | 'debito' | 'credito' | 'loan' | 'dinheiro_outro';
+type FilterType = 'all' | 'receita' | 'despesa' | 'pending';
+type SortKey = 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc';
 
 export default function TransactionList({
   transactions,
+  accounts,
+  creditCards,
   onEdit,
   onDelete,
+  onToggleStatus,
+  onReprogramDate,
+  selectedMonth,
   categories = DEFAULT_CATEGORIES
 }: TransactionListProps) {
-  const [search, setSearch] = useState('');
-  const [typeFilter, setTypeFilter] = useState<'all' | TransactionType>('all');
-  const [catFilter, setCatFilter] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<SortOption>('newest');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterType, setFilterType] = useState<FilterType>('all');
+  const [filterMethod, setFilterMethod] = useState<FilterMethod>('all');
+  const [sortBy, setSortBy] = useState<SortKey>('date-desc');
+  const [reprogramId, setReprogramId] = useState<string | null>(null);
+  const [reprogramDateInput, setReprogramDateInput] = useState('');
 
-  // 1. Filter transactions
-  const filtered = transactions.filter((t) => {
-    // Type Filter
-    if (typeFilter !== 'all' && t.type !== typeFilter) return false;
-    
-    // Category Filter
-    if (catFilter !== 'all' && t.categoryId !== catFilter) return false;
+  // Filter current month transactions first
+  const monthlyTx = transactions.filter(t => t.date.startsWith(selectedMonth));
 
-    // Search
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      const matchDesc = t.description.toLowerCase().includes(q);
-      const matchNotes = t.notes && t.notes.toLowerCase().includes(q);
-      const cat = getCategoryById(t.categoryId, categories);
-      const matchCat = cat.name.toLowerCase().includes(q);
-      if (!matchDesc && !matchNotes && !matchCat) return false;
-    }
+  // Filter by search, category, type and paymentMethod
+  const filteredTx = monthlyTx.filter((t) => {
+    const category = getCategoryById(t.categoryId, categories);
+    const textMatch = 
+      t.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (t.notes || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      category.name.toLowerCase().includes(searchTerm.toLowerCase());
+
+    if (!textMatch) return false;
+
+    // Filter Type (Receipt, Expense, Pending)
+    if (filterType === 'receita' && t.type !== 'receita') return false;
+    if (filterType === 'despesa' && t.type !== 'despesa') return false;
+    if (filterType === 'pending' && t.status !== 'pendente') return false;
+
+    // Filter Method (Debit, Credit card, Loan, Cash)
+    if (filterMethod === 'debito' && t.paymentMethod !== 'debito') return false;
+    if (filterMethod === 'credito' && t.paymentMethod !== 'credito') return false;
+    if (filterMethod === 'loan' && !t.loanId) return false;
+    if (filterMethod === 'dinheiro_outro' && t.paymentMethod !== 'dinheiro' && t.paymentMethod !== 'outro') return false;
 
     return true;
   });
 
-  // 2. Sort transactions
-  const sorted = [...filtered].sort((a, b) => {
-    if (sortBy === 'newest') {
-      return b.date.localeCompare(a.date) || b.id.localeCompare(a.id);
-    }
-    if (sortBy === 'oldest') {
-      return a.date.localeCompare(b.date) || a.id.localeCompare(b.id);
-    }
-    if (sortBy === 'highest') {
-      return b.amount - a.amount;
-    }
-    if (sortBy === 'lowest') {
-      return a.amount - b.amount;
-    }
+  // Sort logic
+  const sortedTx = [...filteredTx].sort((a, b) => {
+    if (sortBy === 'date-desc') return b.date.localeCompare(a.date);
+    if (sortBy === 'date-asc') return a.date.localeCompare(b.date);
+    if (sortBy === 'amount-desc') return b.amount - a.amount;
+    if (sortBy === 'amount-asc') return a.amount - b.amount;
     return 0;
   });
 
-  // 3. Group by date (only if sorting chronologically)
-  const isChronological = sortBy === 'newest' || sortBy === 'oldest';
+  // Group by date
+  const groupedByDate: Record<string, Transaction[]> = {};
+  sortedTx.forEach((tx) => {
+    if (!groupedByDate[tx.date]) {
+      groupedByDate[tx.date] = [];
+    }
+    groupedByDate[tx.date].push(tx);
+  });
 
-  // Grouped interface helper
-  const dateGroups: Record<string, Transaction[]> = {};
-  if (isChronological) {
-    sorted.forEach((t) => {
-      if (!dateGroups[t.date]) {
-        dateGroups[t.date] = [];
-      }
-      dateGroups[t.date].push(t);
-    });
-  }
+  const formatDateLabel = (dateStr: string) => {
+    try {
+      const [year, month, day] = dateStr.split('-').map(Number);
+      const dateObj = new Date(year, month - 1, day);
+      return dateObj.toLocaleDateString('pt-BR', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'short'
+      });
+    } catch {
+      return dateStr;
+    }
+  };
 
-  // Get date key display term
-  const getDateHeader = (dateStr: string): string => {
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    const todayStr = `${year}-${month}-${day}`;
+  const getAccountName = (id?: string) => {
+    const acc = accounts.find(a => a.id === id);
+    return acc ? acc.name : 'Conta Geral';
+  };
 
-    // Get yesterday representation
-    const yesterday = new Date(today);
-    yesterday.setDate(today.getDate() - 1);
-    const yYear = yesterday.getFullYear();
-    const yMonth = String(yesterday.getMonth() + 1).padStart(2, '0');
-    const yDay = String(yesterday.getDate()).padStart(2, '0');
-    const yesterdayStr = `${yYear}-${yMonth}-${yDay}`;
+  const getCardName = (id?: string) => {
+    const card = creditCards.find(c => c.id === id);
+    return card ? card.name : 'Cartão de Crédito';
+  };
 
-    if (dateStr === todayStr) return 'Hoje';
-    if (dateStr === yesterdayStr) return 'Ontem';
+  const handleStartReprogram = (tx: Transaction) => {
+    setReprogramId(tx.id);
+    setReprogramDateInput(tx.date);
+  };
 
-    // Normal date friendly
-    return formatDateFriendly(dateStr);
+  const handleSaveReprogram = (id: string) => {
+    if (reprogramDateInput) {
+      onReprogramDate(id, reprogramDateInput);
+    }
+    setReprogramId(null);
   };
 
   return (
-    <div className="space-y-4">
-      {/* Search and Filters Drawer */}
-      <div id="filter-wrapper-div" className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-3">
-        {/* Search */}
+    <div className="space-y-4 select-none">
+      
+      {/* Search & Filter Header card */}
+      <div className="bg-white rounded-2xl p-4 shadow-xs border border-slate-200/50 space-y-4">
+        
+        {/* Search input */}
         <div className="relative">
+          <Search className="absolute left-3.5 top-2.5 w-4.5 h-4.5 text-slate-400" />
           <input
             type="text"
-            placeholder="Buscar por descrição, nota ou categoria..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-slate-50 border border-slate-100 text-xs font-semibold text-slate-800 placeholder:text-slate-400 focus:outline-hidden focus:border-slate-200 focus:bg-white transition"
+            placeholder="Buscar por descrição, observação ou categoria..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-800 rounded-xl focus:outline-hidden focus:border-black focus:bg-white transition"
           />
-          <span className="absolute left-3.5 top-3 text-sm font-medium text-slate-400">🔍</span>
-          {search && (
-            <button 
-              onClick={() => setSearch('')}
-              className="absolute right-3.5 top-2 py-1 px-1.5 text-xs text-slate-400 hover:text-slate-600 font-bold"
-            >
-              ✕
-            </button>
-          )}
         </div>
 
-        {/* Categories / Type quick pills */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
-          {/* Type filters */}
-          <button
-            onClick={() => { setTypeFilter('all'); setCatFilter('all'); }}
-            className={`px-3 py-1.5 rounded-xl font-bold shrink-0 transition ${
-              typeFilter === 'all'
-                ? 'bg-slate-900 text-white shadow-xs'
-                : 'bg-slate-50 text-slate-500 hover:bg-slate-100/50'
-            }`}
-          >
-            Tudo
-          </button>
-          <button
-            onClick={() => { setTypeFilter('receita'); setCatFilter('all'); }}
-            className={`px-3 py-1.5 rounded-xl font-bold shrink-0 transition ${
-              typeFilter === 'receita'
-                ? 'bg-emerald-50 border border-emerald-100 text-emerald-600 shadow-xs'
-                : 'bg-slate-50 text-slate-500 hover:bg-slate-100/50'
-            }`}
-          >
-            📈 Receitas
-          </button>
-          <button
-            onClick={() => { setTypeFilter('despesa'); setCatFilter('all'); }}
-            className={`px-3 py-1.5 rounded-xl font-bold shrink-0 transition ${
-              typeFilter === 'despesa'
-                ? 'bg-rose-50 border border-rose-100 text-rose-600 shadow-xs'
-                : 'bg-slate-50 text-slate-500 hover:bg-slate-100/50'
-            }`}
-          >
-            💸 Despesas
-          </button>
-
-          <div className="w-[1px] h-4 bg-slate-200 shrink-0 mx-0.5" />
-
-          {/* Quick Select specific Categories relative to the type filter */}
-          {categories
-            .filter((c) => typeFilter === 'all' || c.type === typeFilter)
-            .map((cat) => (
+        {/* Filter Badges resembling premium design */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+          
+          {/* Section: Flow Type */}
+          <div className="flex gap-1 bg-slate-50 p-1 rounded-xl border border-slate-100">
+            {(['all', 'receita', 'despesa', 'pending'] as const).map((t) => (
               <button
-                key={cat.id}
-                onClick={() => setCatFilter(catFilter === cat.id ? 'all' : cat.id)}
-                className={`px-3 py-1.5 rounded-xl font-bold shrink-0 flex items-center gap-1 transition ${
-                  catFilter === cat.id
-                    ? 'text-white'
-                    : 'bg-slate-50 text-slate-600 hover:bg-slate-100/55'
+                key={t}
+                onClick={() => setFilterType(t)}
+                className={`px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider transition ${
+                  filterType === t
+                    ? 'bg-neutral-900 text-white shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800'
                 }`}
-                style={catFilter === cat.id ? { backgroundColor: cat.color } : undefined}
               >
-                <span>{cat.icon}</span>
-                <span>{cat.name}</span>
+                {t === 'all' && 'Todos'}
+                {t === 'receita' && 'Receitas'}
+                {t === 'despesa' && 'Despesas'}
+                {t === 'pending' && 'Agendados'}
               </button>
             ))}
-        </div>
+          </div>
 
-        {/* Sort and counters */}
-        <div className="flex items-center justify-between text-xs pt-1">
-          <p className="text-[11px] font-bold text-slate-400">
-            {filtered.length} {filtered.length === 1 ? 'lançamento encontrado' : 'lançamentos encontrados'}
-          </p>
+          {/* Section: Origin segregation */}
+          <div className="flex gap-1 bg-slate-50 p-1 rounded-xl border border-slate-100">
+            {(['all', 'debito', 'credito', 'loan', 'dinheiro_outro'] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setFilterMethod(m)}
+                className={`px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider transition ${
+                  filterMethod === m
+                    ? 'bg-violet-900 text-white shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                {m === 'all' && 'Fluxo Geral'}
+                {m === 'debito' && 'Débito / PIX'}
+                {m === 'credito' && 'Cartão Crédito'}
+                {m === 'loan' && 'Empréstimos'}
+                {m === 'dinheiro_outro' && 'Em Mão'}
+              </button>
+            ))}
+          </div>
 
-          <div className="flex items-center gap-1 font-semibold text-slate-600">
-            <span className="text-[10px] text-slate-400">Ordenar por</span>
+          {/* Sort selection */}
+          <div className="flex items-center gap-1">
+            <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400" />
             <select
               value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as SortOption)}
-              className="bg-transparent border-none outline-hidden font-bold text-slate-700 cursor-pointer text-xs"
+              onChange={(e) => setSortBy(e.target.value as SortKey)}
+              className="bg-transparent border-0 text-[10px] uppercase tracking-wider font-extrabold text-slate-600 focus:outline-hidden focus:ring-0 cursor-pointer"
             >
-              <option value="newest">Mais recentes</option>
-              <option value="oldest">Mais antigos</option>
-              <option value="highest">Maior valor</option>
-              <option value="lowest">Menor valor</option>
+              <option value="date-desc">Mais recentes</option>
+              <option value="date-asc">Mais antigas</option>
+              <option value="amount-desc">Maior valor</option>
+              <option value="amount-asc">Menor valor</option>
             </select>
           </div>
+
         </div>
+
       </div>
 
-      {/* Actual List */}
-      {sorted.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-12 px-6 bg-white rounded-3xl border border-slate-100 text-center">
-            <span className="text-4xl mb-3">🔍</span>
-            <p className="text-sm font-semibold text-slate-700">Nenhum lançamento encontrado</p>
-            <p className="text-xs text-slate-450 mt-1 max-w-[240px]">
-              Tente redefinir seus filtros ou digite algum outro termo na busca.
-            </p>
-            {(search || typeFilter !== 'all' || catFilter !== 'all') && (
-              <button
-                onClick={() => {
-                  setSearch('');
-                  setTypeFilter('all');
-                  setCatFilter('all');
-                }}
-                className="mt-4 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition shadow-xs cursor-pointer"
-              >
-                Limpar Todos os Filtros
-              </button>
-            )}
-        </div>
-      ) : isChronological ? (
-        /* Render Grouped by Days */
-        <div className="space-y-5">
-          {Object.entries(dateGroups).map(([dateStr, items]) => (
-            <div key={dateStr} className="space-y-2">
-              <h4 className="text-[10px] font-extrabold tracking-wider text-slate-400 uppercase px-1">
-                {getDateHeader(dateStr)}
-              </h4>
+      {/* Transaction List Entries */}
+      <div className="space-y-4">
+        {Object.keys(groupedByDate).length === 0 ? (
+          <div className="bg-white rounded-2xl p-10 border border-slate-100 text-center flex flex-col items-center justify-center space-y-2">
+            <Receipt className="w-8 h-8 text-slate-300" />
+            <h4 className="text-xs font-black uppercase text-slate-400 tracking-wider">Nenhum registro encontrado</h4>
+            <p className="text-[10px] text-slate-400 max-w-xs">Nenhuma transação atende aos filtros definidos. Crie ou desative os filtros para listar as movimentações.</p>
+          </div>
+        ) : (
+          Object.entries(groupedByDate).map(([dateStr, txs]) => (
+            <div key={dateStr} className="space-y-1.5">
+              
+              {/* Date Header label */}
+              <div className="flex justify-between items-center px-1">
+                <span className="text-[9.5px] font-extrabold text-slate-400 capitalize block tracking-wide">
+                  {formatDateLabel(dateStr)}
+                </span>
+                <span className="text-[8.5px] font-medium text-slate-350 tracking-wider">
+                  {txs.length} {txs.length === 1 ? 'registro' : 'registros'}
+                </span>
+              </div>
 
-              <div className="bg-white rounded-2xl border border-slate-50 shadow-xs divide-y divide-slate-50 overflow-hidden">
-                {items.map((t) => {
-                  const cat = getCategoryById(t.categoryId, categories);
-                  const isSelected = selectedId === t.id;
+              {/* Transactions on day block */}
+              <div className="bg-white rounded-2xl border border-slate-200/40 p-1.5 divide-y divide-slate-100/60 shadow-xs">
+                {txs.map((tx) => {
+                  const cat = getCategoryById(tx.categoryId, categories);
+                  const isReprogramming = reprogramId === tx.id;
 
                   return (
-                    <div key={t.id} className="transition-all duration-200">
-                      {/* Main raw info */}
-                      <div 
-                        className={`p-3.5 flex items-center justify-between gap-3 cursor-pointer ${
-                          isSelected ? 'bg-slate-50/70' : 'hover:bg-slate-55'
-                        }`}
-                        onClick={() => setSelectedId(isSelected ? null : t.id)}
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          {/* Visual custom category avatar */}
-                          <div
-                            className="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
-                            style={{ backgroundColor: `${cat.color}12`, color: cat.color }}
-                          >
-                            <span className="text-lg">{cat.icon}</span>
-                          </div>
-
-                          <div className="min-w-0">
-                            <p className="text-sm font-semibold text-slate-800 truncate leading-tight">
-                              {t.description}
-                            </p>
-                            <div className="flex items-center gap-1.5 mt-0.5">
-                              <span 
-                                className="text-[9px] font-extrabold rounded-md px-1 py-[1.5px] uppercase tracking-wide shrink-0"
-                                style={{ backgroundColor: `${cat.color}15`, color: cat.color }}
-                              >
-                                {cat.name}
-                              </span>
-                              {t.notes && (
-                                <span className="text-[10px] text-slate-400 truncate max-w-[140px]">
-                                  • {t.notes}
-                                </span>
-                              )}
-                            </div>
-                          </div>
+                    <div 
+                      key={tx.id} 
+                      className={`p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
+                        tx.status === 'pendente' ? 'bg-zinc-50/45 text-black' : 'text-black hover:bg-neutral-50/30'
+                      }`}
+                    >
+                      
+                      {/* Left: icon, category details, payment reference */}
+                      <div className="flex items-start gap-3.5">
+                        <div 
+                          className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-xs"
+                          style={{ backgroundColor: `${cat.color}15`, border: `1px solid ${cat.color}25` }}
+                        >
+                          <CategoryIcon name={cat.icon} className="w-5 h-5" style={{ color: cat.color }} />
                         </div>
 
-                        {/* Amount visual indicator */}
-                        <div className="text-right shrink-0">
-                          <p 
-                            className={`text-sm font-bold ${
-                              t.type === 'receita' ? 'text-emerald-600' : 'text-slate-950'
-                            }`}
-                          >
-                            {t.type === 'receita' ? '+' : '-'} {formatCurrency(t.amount)}
-                          </p>
+                        <div className="space-y-0.5">
+                          <h4 className="text-xs font-black text-slate-850 capitalize leading-snug">
+                            {tx.description}
+                          </h4>
+                          
+                          <div className="flex flex-wrap items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                            <span className="bg-slate-100 px-1.5 py-0.5 rounded-sm">{cat.name}</span>
+                            
+                            {/* Account, Card or Loan contextual badge */}
+                            {tx.paymentMethod === 'credito' && tx.creditCardId && (
+                              <span className="bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded-sm flex items-center gap-1 border border-purple-100">
+                                <CardIcon className="w-2.5 h-2.5" />
+                                {getCardName(tx.creditCardId)}
+                              </span>
+                            )}
+                            
+                            {tx.paymentMethod === 'debito' && tx.bankAccountId && (
+                              <span className="bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded-sm border border-amber-100">
+                                PIX / {getAccountName(tx.bankAccountId)}
+                              </span>
+                            )}
+
+                            {tx.loanId && (
+                              <span className="bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-sm border border-indigo-100 animate-pulse">
+                                Parcela Empréstimo
+                              </span>
+                            )}
+
+                            {tx.paymentMethod === 'dinheiro' && (
+                              <span className="bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded-sm border border-emerald-100">
+                                Dinheiro em Mão
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Notes if present */}
+                          {tx.notes && (
+                            <p className="text-[10px] text-slate-450 italic font-medium pt-0.5 max-w-sm">
+                              "{tx.notes}"
+                            </p>
+                          )}
                         </div>
                       </div>
 
-                      {/* Expanding Action Drawer (Edit / Delete) */}
-                      {isSelected && (
-                        <div className="bg-slate-50/80 px-4 py-2.5 flex items-center justify-end gap-3 border-t border-slate-50/50">
-                          <button
-                            id={`edit-btn-${t.id}`}
-                            onClick={() => {
-                              onEdit(t);
-                              setSelectedId(null);
-                            }}
-                            className="px-3.5 py-1.5 rounded-xl bg-white border border-slate-100 hover:bg-slate-50 text-xs font-bold text-slate-600 hover:text-slate-850 shadow-xs transition flex items-center gap-1"
-                          >
-                            <span>✏️</span> Editar
-                          </button>
-                          <button
-                            id={`del-btn-${t.id}`}
-                            onClick={() => {
-                              if (confirm('Tem certeza que deseja excluir este lançamento permanentemente?')) {
-                                onDelete(t.id);
-                              }
-                            }}
-                            className="px-3.5 py-1.5 rounded-xl bg-rose-50 border border-rose-100 hover:bg-rose-100 text-xs font-bold text-rose-600 shadow-xs transition flex items-center gap-1"
-                          >
-                            <span>🗑️</span> Excluir
-                          </button>
+                      {/* Right: amount, dynamic rescheduling controls, action buttons */}
+                      <div className="flex items-center justify-between sm:justify-end gap-4 border-t sm:border-0 border-slate-100/80 pt-2.5 sm:pt-0">
+                        
+                        {/* Status Switch Badge (Click toggles paid on the fly) */}
+                        <button
+                          type="button"
+                          onClick={() => onToggleStatus(tx.id)}
+                          className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-extrabold uppercase tracking-widest border transition cursor-pointer ${
+                            tx.status === 'pago'
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                              : 'bg-zinc-100 text-zinc-500 border-zinc-200'
+                          }`}
+                        >
+                          {tx.status === 'pago' ? (
+                            <>
+                              <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                              {tx.type === 'receita' ? 'Recebido' : 'Liquidado'}
+                            </>
+                          ) : (
+                            <>
+                              <Clock className="w-3 h-3 text-zinc-400" />
+                              Agendado
+                            </>
+                          )}
+                        </button>
+
+                        {/* Amount label */}
+                        <div className="text-right">
+                          <strong className={`text-xs font-black block tracking-tight ${
+                            tx.type === 'receita' ? 'text-emerald-600' : 'text-neutral-800'
+                          }`}>
+                            {tx.type === 'receita' ? '+' : '-'} {formatCurrency(tx.amount)}
+                          </strong>
                         </div>
-                      )}
+
+                        {/* Actions (reprogram schedule or edit/delete) */}
+                        <div className="flex items-center gap-1.5">
+                          
+                          {isReprogramming ? (
+                            <div className="flex items-center gap-1 animate-in slide-in-from-right-3">
+                              <input
+                                type="date"
+                                value={reprogramDateInput}
+                                onChange={e => setReprogramDateInput(e.target.value)}
+                                className="px-1.5 py-0.5 border border-zinc-300 rounded-md text-[10px] font-bold focus:outline-hidden"
+                              />
+                              <button 
+                                onClick={() => handleSaveReprogram(tx.id)}
+                                className="bg-black text-white px-2 py-0.5 rounded-md text-[9px] font-bold uppercase transition"
+                              >
+                                OK
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => handleStartReprogram(tx)}
+                              className="text-slate-400 hover:text-indigo-600 p-1.5 hover:bg-slate-50 rounded-lg transition"
+                              title="Reprogramar Data"
+                            >
+                              <Calendar className="w-4 h-4" />
+                            </button>
+                          )}
+
+                          <button
+                            onClick={() => onEdit(tx)}
+                            className="text-slate-400 hover:text-slate-800 p-1.5 hover:bg-slate-50 rounded-lg transition"
+                            title="Editar"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+
+                          <button
+                            onClick={() => onDelete(tx.id)}
+                            className="text-slate-400 hover:text-rose-600 p-1.5 hover:bg-slate-50 rounded-lg transition"
+                            title="Excluir"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+
+                        </div>
+
+                      </div>
+
                     </div>
                   );
                 })}
               </div>
+
             </div>
-          ))}
-        </div>
-      ) : (
-        /* Standard Flat list if sorted by Value */
-        <div className="bg-white rounded-2xl border border-slate-50 shadow-xs divide-y divide-slate-50 overflow-hidden">
-          {sorted.map((t) => {
-            const cat = getCategoryById(t.categoryId, categories);
-            const isSelected = selectedId === t.id;
+          ))
+        )}
+      </div>
 
-            return (
-              <div key={t.id} className="transition-all duration-200">
-                <div 
-                  className={`p-3.5 flex items-center justify-between gap-3 cursor-pointer ${
-                    isSelected ? 'bg-slate-50/70' : 'hover:bg-slate-55'
-                  }`}
-                  onClick={() => setSelectedId(isSelected ? null : t.id)}
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div
-                      className="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
-                      style={{ backgroundColor: `${cat.color}12`, color: cat.color }}
-                    >
-                      <span className="text-lg">{cat.icon}</span>
-                    </div>
-
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-800 truncate leading-tight">
-                        {t.description}
-                      </p>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="text-[10px] text-slate-400">
-                          {formatDateFriendly(t.date)}
-                        </span>
-                        <span 
-                          className="text-[9px] font-extrabold rounded-md px-1 py-[1.5px] uppercase tracking-wide shrink-0"
-                          style={{ backgroundColor: `${cat.color}15`, color: cat.color }}
-                        >
-                          {cat.name}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="text-right shrink-0">
-                    <p 
-                      className={`text-sm font-bold ${
-                        t.type === 'receita' ? 'text-emerald-600' : 'text-slate-950'
-                      }`}
-                    >
-                      {t.type === 'receita' ? '+' : '-'} {formatCurrency(t.amount)}
-                    </p>
-                  </div>
-                </div>
-
-                {isSelected && (
-                  <div className="bg-slate-50/80 px-4 py-2.5 flex items-center justify-end gap-3 border-t border-slate-50/50">
-                    <button
-                      onClick={() => {
-                        onEdit(t);
-                        setSelectedId(null);
-                      }}
-                      className="px-3.5 py-1.5 rounded-xl bg-white border border-slate-100 hover:bg-slate-50 text-xs font-bold text-slate-600 shadow-xs transition flex items-center gap-1"
-                    >
-                      ✏️ Editar
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (confirm('Tem certeza que deseja excluir este lançamento permanentemente?')) {
-                          onDelete(t.id);
-                        }
-                      }}
-                      className="px-3.5 py-1.5 rounded-xl bg-rose-50 border border-rose-100 hover:bg-rose-100 text-xs font-bold text-rose-600 shadow-xs transition flex items-center gap-1"
-                    >
-                      🗑️ Excluir
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
     </div>
   );
 }

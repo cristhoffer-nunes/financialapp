@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { ShieldCheck, Mail, Lock, User, AlertCircle, ArrowRight } from 'lucide-react';
 
 interface AuthScreenProps {
   onLoginSuccess: (email: string, userName?: string) => void;
@@ -61,7 +62,7 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
         if (data.user && data?.session) {
           onLoginSuccess(email, name);
         } else {
-          setErrorMsg('Cadastro realizado! Por favor, verifique sua caixa de entrada e e-mails de spam para confirmar o seu e-mail antes de fazer login.');
+          setErrorMsg('Cadastro realizado! Por favor, verifique sua caixa de entrada para confirmar o seu e-mail antes de fazer login.');
           setIsSignUp(false); // Switch back to allow them to login after confirmation
         }
       } else {
@@ -85,7 +86,7 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
       const isConfirmationError = err.message?.toLowerCase().includes('confirm') || err.message === 'Email not confirmed';
       
       if (isConfirmationError) {
-        setErrorMsg('O seu e-mail ainda não foi confirmado. Por favor, verifique sua caixa de entrada para clicar no link de ativação OU desative o "Confirm email" no painel do Supabase (Authentication -> Providers -> Email).');
+        setErrorMsg('O seu e-mail ainda não foi confirmado. Por favor, verifique sua caixa de entrada para clicar no link de ativação.');
       } else {
         setErrorMsg(err.message || 'Credenciais inválidas ou erro ao conectar com o Supabase.');
       }
@@ -95,24 +96,25 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 font-sans text-slate-900 px-4 py-8 md:py-16 w-full">
-      <div className="w-full max-w-sm bg-white rounded-3xl p-6 sm:p-8 shadow-xl shadow-slate-100 border border-slate-100 space-y-6 animate-in fade-in zoom-in-95 duration-300">
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 font-sans text-slate-900 px-4 py-8 md:py-16 w-full select-none">
+      <div className="w-full max-w-sm bg-white rounded-3xl p-6 sm:p-8 shadow-md border border-slate-200/60 space-y-6 animate-in fade-in zoom-in-95 duration-300">
         
         {/* Brand visual header identifier */}
-        <div className="text-center space-y-3">
-          <div className="w-12 h-12 bg-slate-900 rounded-xl flex items-center justify-center mx-auto shadow-md shadow-slate-900/10">
-            <div className="w-6 h-6 border-2 border-white rounded-md"></div>
+        <div className="text-center space-y-2">
+          <div className="w-11 h-11 bg-black rounded-2xl flex items-center justify-center mx-auto shadow-xs">
+            <ShieldCheck className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight uppercase text-slate-950">Finanças.io</h1>
+            <h1 className="text-lg font-extrabold tracking-tight uppercase text-black">Finanças.io</h1>
             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest leading-none mt-1">ELEGÂNCIA & SIMPLICIDADE</p>
           </div>
         </div>
 
         {/* Floating validation notification */}
         {errorMsg && (
-          <div className="p-3.5 bg-rose-50 border border-rose-100 text-rose-600 rounded-xl text-center text-[10px] font-bold uppercase tracking-wide leading-tight">
-            ⚠️ {errorMsg}
+          <div className="p-3 bg-slate-50 border border-slate-200 text-slate-800 rounded-xl flex items-center gap-2 text-[10px] font-bold uppercase tracking-wide leading-tight">
+            <AlertCircle className="w-4 h-4 text-black shrink-0" />
+            <span>{errorMsg}</span>
           </div>
         )}
 
@@ -121,71 +123,83 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
           {isSignUp && (
             <div className="space-y-1">
               <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">Seu Nome</label>
-              <input
-                type="text"
-                placeholder="Ex. Arthur Pendragon"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl bg-slate-50/50 border border-slate-200 text-xs font-semibold text-slate-900 focus:outline-hidden focus:border-slate-400 transition"
-                required
-              />
+              <div className="relative">
+                <span className="absolute left-3 top-3 text-slate-400"><User className="w-3.5 h-3.5" /></span>
+                <input
+                  type="text"
+                  placeholder="Arthur Pendragon"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200/60 text-xs font-semibold text-slate-900 focus:outline-hidden focus:border-black focus:bg-white transition"
+                  required
+                />
+              </div>
             </div>
           )}
 
           <div className="space-y-1">
-            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">E-mail</label>
-            <input
-              type="email"
-              placeholder="seuemail@exemplo.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl bg-slate-50/50 border border-slate-200 text-xs font-semibold text-slate-900 focus:outline-hidden focus:border-slate-400 transition"
-              required
-            />
+            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block font-sans">E-mail</label>
+            <div className="relative">
+              <span className="absolute left-3 top-3 text-slate-400"><Mail className="w-3.5 h-3.5" /></span>
+              <input
+                type="email"
+                placeholder="seuemail@exemplo.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full pl-9 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200/60 text-xs font-semibold text-slate-900 focus:outline-hidden focus:border-black focus:bg-white transition"
+                required
+              />
+            </div>
           </div>
 
           <div className="space-y-1">
             <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">Senha</label>
-            <input
-              type="password"
-              placeholder="Mínimo 6 caracteres"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl bg-slate-50/50 border border-slate-200 text-xs font-semibold text-slate-900 focus:outline-hidden focus:border-slate-400 transition"
-              required
-            />
+            <div className="relative">
+              <span className="absolute left-3 top-3 text-slate-400"><Lock className="w-3.5 h-3.5" /></span>
+              <input
+                type="password"
+                placeholder="Mínimo 6 caracteres"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full pl-9 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200/60 text-xs font-semibold text-slate-900 focus:outline-hidden focus:border-black focus:bg-white transition"
+                required
+              />
+            </div>
           </div>
 
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full bg-slate-900 cursor-pointer text-white py-3 rounded-xl font-bold text-xs uppercase tracking-widest shadow-lg shadow-slate-200/50 hover:bg-slate-850 transition duration-150 flex items-center justify-center"
+            className="w-full bg-black cursor-pointer text-white py-2.5 rounded-xl font-bold text-xs uppercase tracking-widest shadow-xs hover:bg-slate-900 active:scale-[0.98] transition flex items-center justify-center gap-2"
           >
             {isLoading ? (
               <span className="flex items-center gap-2">
-                <svg className="animate-spin h-4.5 w-4.5 text-white" fill="none" viewBox="0 0 24 24">
+                <svg className="animate-spin h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
                 Conectando...
               </span>
             ) : (
-              isSignUp ? 'Criar Conta' : 'Acessar Carteira'
+              <>
+                <span>{isSignUp ? 'Criar Conta' : 'Acessar Carteira'}</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </>
             )}
           </button>
         </form>
 
         {/* Change segment logic button */}
-        <div className="text-center pt-2">
+        <div className="text-center pt-2 border-t border-slate-100">
           <button
             type="button"
             onClick={() => {
               setIsSignUp(!isSignUp);
               setErrorMsg(null);
             }}
-            className="text-[11px] font-bold text-slate-500 uppercase tracking-wider hover:text-slate-900 transition underline decoration-dotted underline-offset-4"
+            className="w-full text-[10px] font-bold text-slate-500 uppercase tracking-wider hover:text-black transition cursor-pointer"
           >
-            {isSignUp ? 'Já tenho cadastro • Fazer Login' : 'Não tem conta? Cadastrar-se'}
+            {isSignUp ? 'Já tenho cadastro • Entrar' : 'Novo por aqui? Criar conta'}
           </button>
         </div>
 
