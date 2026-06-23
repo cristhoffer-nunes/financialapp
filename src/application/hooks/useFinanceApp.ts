@@ -15,11 +15,17 @@ import {
 } from '../../types';
 import { LocalStorageService } from '../../infrastructure/storage/LocalStorageService';
 import { DEFAULT_GOAL, DEFAULT_BUDGETS } from '../../domain/entities/MonthlyGoal';
+import { supabase } from '../../lib/supabase';
+import { SupabaseStorageService } from '../../infrastructure/storage/SupabaseStorageService';
 
 export function useFinanceApp() {
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
     return LocalStorageService.getIsLoggedIn();
   });
+
+  const [userId, setUserId] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [dbError, setDbError] = useState<string | null>(null);
 
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [creditCards, setCreditCards] = useState<CreditCard[]>([]);
@@ -35,8 +41,151 @@ export function useFinanceApp() {
   const [budgets, setBudgets] = useState<CategoryBudget[]>(DEFAULT_BUDGETS);
   const [profile, setProfile] = useState<UserProfile>({ name: 'Marcelo Silva', currency: 'BRL' });
 
-  // Load state from local storage initially (or populate seeds)
+  // 1. Listen to Supabase auth state changes
   useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setUserId(session.user.id);
+        setIsLoggedIn(true);
+        LocalStorageService.setIsLoggedIn(true);
+      } else {
+        setUserId(null);
+        setIsLoggedIn(false);
+        LocalStorageService.setIsLoggedIn(false);
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setUserId(session.user.id);
+        setIsLoggedIn(true);
+        LocalStorageService.setIsLoggedIn(true);
+      } else {
+        setUserId(null);
+        setIsLoggedIn(false);
+        LocalStorageService.setIsLoggedIn(false);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  // 2. Load data from Supabase when user ID is available
+  useEffect(() => {
+    if (!userId) return;
+
+    const loadData = async () => {
+      setIsSyncing(true);
+      setDbError(null);
+      const res = await SupabaseStorageService.fetchAllUserData(userId);
+      if (res.success && res.data) {
+        const { accounts: dbAccs, creditCards: dbCards, loans: dbLoans, transactions: dbTxs, goals: dbGoals, budgets: dbBudgets, profile: dbProfile } = res.data;
+
+        // If there is data in Supabase, let's restore it
+        if (dbAccs.length > 0 || dbCards.length > 0 || dbLoans.length > 0 || dbTxs.length > 0) {
+          setAccounts(dbAccs);
+          setCreditCards(dbCards);
+          setLoans(dbLoans);
+          setTransactions(dbTxs);
+          
+          if (dbGoals.length > 0) {
+            const monthGoal = dbGoals.find(g => g.month === selectedMonth) || dbGoals[0];
+            setGoal(monthGoal);
+          }
+          if (dbBudgets.length > 0) {
+            setBudgets(dbBudgets);
+          }
+          if (dbProfile) {
+            setProfile(dbProfile);
+          }
+
+          // Save to local storage for caching/offline fallback
+          LocalStorageService.saveAccounts(dbAccs);
+          LocalStorageService.saveCreditCards(dbCards);
+          LocalStorageService.saveLoans(dbLoans);
+          LocalStorageService.saveTransactions(dbTxs);
+          if (dbGoals.length > 0) {
+            const monthGoal = dbGoals.find(g => g.month === selectedMonth) || dbGoals[0];
+            LocalStorageService.saveGoal(monthGoal);
+          }
+          if (dbBudgets.length > 0) {
+            LocalStorageService.saveBudgets(dbBudgets);
+          }
+          if (dbProfile) {
+            LocalStorageService.saveProfile(dbProfile);
+          }
+        } else {
+          // If Supabase has no data yet (new user!), let's sync local data or seed data up to Supabase!
+          const currentAccounts = LocalStorageService.getAccounts() || [];
+          const currentCards = LocalStorageService.getCreditCards() || [];
+          const currentLoans = LocalStorageService.getLoans() || [];
+          const currentTxs = LocalStorageService.getTransactions() || [];
+          const currentGoal = LocalStorageService.getGoal() || DEFAULT_GOAL;
+          const currentBudgets = LocalStorageService.getBudgets() || DEFAULT_BUDGETS;
+          const currentProfile = LocalStorageService.getProfile() || { name: profile.name, currency: 'BRL' };
+
+          let finalAccs = currentAccounts;
+          let finalCards = currentCards;
+          let finalLoans = currentLoans;
+          let finalTxs = currentTxs;
+
+          if (finalAccs.length === 0 && finalCards.length === 0 && finalLoans.length === 0 && finalTxs.length === 0) {
+            // Use seeds
+            const seeds = LocalStorageService.getInitialSeedData();
+            finalAccs = seeds.accounts;
+            finalCards = seeds.cards;
+            finalLoans = seeds.loans;
+            finalTxs = seeds.transactions;
+
+            setAccounts(finalAccs);
+            setCreditCards(finalCards);
+            setLoans(finalLoans);
+            setTransactions(finalTxs);
+
+            LocalStorageService.saveAccounts(finalAccs);
+            LocalStorageService.saveCreditCards(finalCards);
+            LocalStorageService.saveLoans(finalLoans);
+            LocalStorageService.saveTransactions(finalTxs);
+          }
+
+          // Upload to Supabase!
+          const syncRes = await SupabaseStorageService.syncAllToSupabase(userId, {
+            accounts: finalAccs,
+            creditCards: finalCards,
+            loans: finalLoans,
+            transactions: finalTxs,
+            goal: currentGoal,
+            budgets: currentBudgets,
+            profile: currentProfile
+          });
+
+          if (!syncRes.success) {
+            if (syncRes.error === 'SCHEMA_NOT_FOUND') {
+              setDbError('SCHEMA_NOT_FOUND');
+            } else {
+              setDbError(syncRes.error || 'Erro ao sincronizar dados com o banco.');
+            }
+          }
+        }
+      } else {
+        if (res.error === 'SCHEMA_NOT_FOUND') {
+          setDbError('SCHEMA_NOT_FOUND');
+        } else {
+          setDbError(res.error || 'Erro ao obter dados do Supabase.');
+        }
+      }
+      setIsSyncing(false);
+    };
+
+    loadData();
+  }, [userId]);
+
+  // Load state from local storage initially (or populate seeds) for non-authenticated guests
+  useEffect(() => {
+    if (userId) return; // Supabase listener handles this if logged in
+
     try {
       const storedAccounts = LocalStorageService.getAccounts();
       const storedCards = LocalStorageService.getCreditCards();
@@ -81,7 +230,7 @@ export function useFinanceApp() {
     } catch (e) {
       console.error('Failed to restore financial state', e);
     }
-  }, []);
+  }, [userId]);
 
   // Save state on any mutations
   const saveAllState = (
@@ -111,6 +260,9 @@ export function useFinanceApp() {
       updated = [...accounts, account];
     }
     saveAllState(updated, creditCards, loans, transactions);
+    if (userId) {
+      SupabaseStorageService.saveBankAccount(userId, account);
+    }
   };
 
   const handleDeleteAccount = (accountId: string) => {
@@ -131,6 +283,20 @@ export function useFinanceApp() {
     });
 
     saveAllState(updatedAccs, creditCards, updatedLoans, updatedTxs);
+    if (userId) {
+      SupabaseStorageService.deleteBankAccount(userId, accountId);
+      // Update affected transactions and loans in Supabase
+      updatedTxs.forEach(t => {
+        if (t.bankAccountId === undefined) {
+          SupabaseStorageService.saveTransaction(userId, t);
+        }
+      });
+      updatedLoans.forEach(l => {
+        if (l.bankAccountId !== loans.find(x => x.id === l.id)?.bankAccountId) {
+          SupabaseStorageService.saveLoan(userId, l);
+        }
+      });
+    }
   };
 
   // --- CARTÕES DE CRÉDITO (CREDIT CARDS) CRUD ---
@@ -143,6 +309,9 @@ export function useFinanceApp() {
       updated = [...creditCards, card];
     }
     saveAllState(accounts, updated, loans, transactions);
+    if (userId) {
+      SupabaseStorageService.saveCreditCard(userId, card);
+    }
   };
 
   const handleDeleteCreditCard = (cardId: string) => {
@@ -151,6 +320,14 @@ export function useFinanceApp() {
     const updatedTxs = transactions.filter(t => t.creditCardId !== cardId);
 
     saveAllState(accounts, updatedCards, loans, updatedTxs);
+    if (userId) {
+      SupabaseStorageService.deleteCreditCard(userId, cardId);
+      // Since transactions linked to this card are deleted, let's delete them in Supabase
+      const deletedTxs = transactions.filter(t => t.creditCardId === cardId);
+      deletedTxs.forEach(t => {
+        SupabaseStorageService.deleteTransaction(userId, t.id);
+      });
+    }
   };
 
   const handlePayCardStatement = (cardId: string, bankAccountId: string, amount: number) => {
@@ -171,12 +348,11 @@ export function useFinanceApp() {
       notes: `Quitação total/parcial da fatura do cartão ${card.name}`
     };
 
-    // Keep the credit card transactions but we can delete or mark them in some other system if needed.
-    // In this premium flow, we add the pay statement transaction so it reduces the bank account balance correctly.
-    // Also, we can optionally clear out the card's unpaid transactions for a fresh cycle!
-    // Let's clear matching card expenses or keep them as archive but log the payment. Let's keep them and log the payment.
     const updatedTxs = [payTx, ...transactions];
     saveAllState(accounts, creditCards, loans, updatedTxs);
+    if (userId) {
+      SupabaseStorageService.saveTransaction(userId, payTx);
+    }
   };
 
   // --- EMPRÉSTIMOS (LOANS) CRUD ---
@@ -185,9 +361,12 @@ export function useFinanceApp() {
     let updatedLoans: Loan[];
     if (exists) {
       updatedLoans = loans.map(l => (l.id === loan.id ? loan : l));
+      saveAllState(accounts, creditCards, updatedLoans, transactions);
+      if (userId) {
+        SupabaseStorageService.saveLoan(userId, loan);
+      }
     } else {
       updatedLoans = [...loans, loan];
-      // When a loan is initialized, we optionally add a paid income transaction representing the funding received in bankAccountId!
       const fundingTx: Transaction = {
         id: `loan-fund-${Date.now()}`,
         description: `Entrada Crédito: ${loan.name}`,
@@ -202,9 +381,11 @@ export function useFinanceApp() {
       };
       const updatedTxs = [fundingTx, ...transactions];
       saveAllState(accounts, creditCards, updatedLoans, updatedTxs);
-      return;
+      if (userId) {
+        SupabaseStorageService.saveLoan(userId, loan);
+        SupabaseStorageService.saveTransaction(userId, fundingTx);
+      }
     }
-    saveAllState(accounts, creditCards, updatedLoans, transactions);
   };
 
   const updatedUniqLoans = (updated: Loan[]) => updated;
@@ -214,6 +395,14 @@ export function useFinanceApp() {
     // Unlink transaction references
     const updatedTxs = transactions.filter(t => t.loanId !== loanId);
     saveAllState(accounts, creditCards, updatedLoans, updatedTxs);
+    if (userId) {
+      SupabaseStorageService.deleteLoan(userId, loanId);
+      // Since transactions linked to this loan are deleted, delete them in Supabase
+      const deletedTxs = transactions.filter(t => t.loanId === loanId);
+      deletedTxs.forEach(t => {
+        SupabaseStorageService.deleteTransaction(userId, t.id);
+      });
+    }
   };
 
   const handlePayLoanInstallment = (loanId: string, bankAccountId: string) => {
@@ -247,6 +436,10 @@ export function useFinanceApp() {
     const updatedTxs = [payTx, ...transactions];
 
     saveAllState(accounts, creditCards, updatedLoans, updatedTxs);
+    if (userId) {
+      SupabaseStorageService.saveLoan(userId, updatedLoan);
+      SupabaseStorageService.saveTransaction(userId, payTx);
+    }
   };
 
   // --- TRANSAÇÕES (TRANSACTIONS) CRUD ---
@@ -259,6 +452,9 @@ export function useFinanceApp() {
       updatedTxs = [tx, ...transactions];
     }
     saveAllState(accounts, creditCards, loans, updatedTxs);
+    if (userId) {
+      SupabaseStorageService.saveTransaction(userId, tx);
+    }
   };
 
   const handleDeleteTransaction = (id: string) => {
@@ -270,10 +466,14 @@ export function useFinanceApp() {
     if (tx.isInstallmentPayment && tx.loanId) {
       updatedLoans = loans.map(l => {
         if (l.id === tx.loanId) {
-          return {
+          const updatedL = {
             ...l,
             installmentsPaid: Math.max(0, l.installmentsPaid - 1)
           };
+          if (userId) {
+            SupabaseStorageService.saveLoan(userId, updatedL);
+          }
+          return updatedL;
         }
         return l;
       });
@@ -281,47 +481,69 @@ export function useFinanceApp() {
 
     const updatedTxs = transactions.filter(t => t.id !== id);
     saveAllState(accounts, creditCards, updatedLoans, updatedTxs);
+    if (userId) {
+      SupabaseStorageService.deleteTransaction(userId, id);
+    }
   };
 
   // Switch status (e.g. Confirm Payment)
   const handleTogglePaymentStatus = (id: string) => {
+    let updatedTx: Transaction | null = null;
     const updatedTxs = transactions.map(t => {
       if (t.id === id) {
-        return {
+        updatedTx = {
           ...t,
           status: t.status === 'pago' ? ('pendente' as const) : ('pago' as const)
         };
+        return updatedTx;
       }
       return t;
     });
     saveAllState(accounts, creditCards, loans, updatedTxs);
+    if (userId && updatedTx) {
+      SupabaseStorageService.saveTransaction(userId, updatedTx);
+    }
   };
 
   // Shifting date of transactions (reprogrammed transactions)
   const handleReprogramTransactionDate = (id: string, newDate: string) => {
+    let updatedTx: Transaction | null = null;
     const updatedTxs = transactions.map(t => {
       if (t.id === id) {
-        return { ...t, date: newDate };
+        updatedTx = { ...t, date: newDate };
+        return updatedTx;
       }
       return t;
     });
     saveAllState(accounts, creditCards, loans, updatedTxs);
+    if (userId && updatedTx) {
+      SupabaseStorageService.saveTransaction(userId, updatedTx);
+    }
   };
 
   // --- SETTINGS AND PROFILE ---
   const handleUpdateGoal = (updatedGoal: MonthlyGoal) => {
     setGoal(updatedGoal);
     LocalStorageService.saveGoal(updatedGoal);
+    if (userId) {
+      SupabaseStorageService.saveGoal(userId, updatedGoal);
+    }
   };
 
   const handleUpdateBudgets = (updatedBudgets: CategoryBudget[]) => {
     setBudgets(updatedBudgets);
     LocalStorageService.saveBudgets(updatedBudgets);
+    if (userId) {
+      SupabaseStorageService.saveBudgets(userId, updatedBudgets);
+    }
   };
 
   const handleUpdateProfile = (updatedProfile: UserProfile) => {
     setProfile(updatedProfile);
     LocalStorageService.saveProfile(updatedProfile);
+    if (userId) {
+      SupabaseStorageService.saveProfile(userId, updatedProfile);
+    }
   };
 
   const handleResetAllData = () => {
@@ -342,6 +564,18 @@ export function useFinanceApp() {
     LocalStorageService.saveGoal(DEFAULT_GOAL);
     LocalStorageService.saveBudgets(DEFAULT_BUDGETS);
     LocalStorageService.saveProfile({ name: 'Marcelo Silva', currency: 'BRL' });
+
+    if (userId) {
+      SupabaseStorageService.syncAllToSupabase(userId, {
+        accounts: seeds.accounts,
+        creditCards: seeds.cards,
+        loans: seeds.loans,
+        transactions: seeds.transactions,
+        goal: DEFAULT_GOAL,
+        budgets: DEFAULT_BUDGETS,
+        profile: { name: 'Marcelo Silva', currency: 'BRL' }
+      });
+    }
   };
 
   const handleLoginSuccess = (name: string) => {
@@ -353,12 +587,27 @@ export function useFinanceApp() {
   };
 
   const handleLogout = () => {
-    setIsLoggedIn(false);
-    LocalStorageService.setIsLoggedIn(false);
+    supabase.auth.signOut().then(() => {
+      setIsLoggedIn(false);
+      setUserId(null);
+      LocalStorageService.setIsLoggedIn(false);
+      LocalStorageService.clearAll();
+      
+      const seeds = LocalStorageService.getInitialSeedData();
+      setAccounts(seeds.accounts);
+      setCreditCards(seeds.cards);
+      setLoans(seeds.loans);
+      setTransactions(seeds.transactions);
+      setGoal(DEFAULT_GOAL);
+      setBudgets(DEFAULT_BUDGETS);
+      setProfile({ name: 'Marcelo Silva', currency: 'BRL' });
+    });
   };
 
   return {
     isLoggedIn,
+    isSyncing,
+    dbError,
     accounts,
     creditCards,
     loans,

@@ -50,6 +50,8 @@ import {
 export default function App() {
   const {
     isLoggedIn,
+    isSyncing,
+    dbError,
     accounts,
     creditCards,
     loans,
@@ -83,6 +85,9 @@ export default function App() {
   } = useFinanceApp();
 
   // --- COMPONENT LEVEL STATE ---
+  const [showSqlModal, setShowSqlModal] = useState(false);
+  const [copiedSql, setCopiedSql] = useState(false);
+
   // Transaction sheet
   const [isTxOpen, setIsTxOpen] = useState(false);
   const [editingTx, setEditingTx] = useState<Transaction | null>(null);
@@ -342,6 +347,46 @@ export default function App() {
       {/* 3. MAIN WORKPLACE ROUTER CONTAINER */}
       <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6 max-h-screen no-scrollbar">
         
+        {/* Supabase Status Alert Banner */}
+        {isLoggedIn && (isSyncing || dbError) && (
+          <div className={`p-4 rounded-2xl border text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs animate-in slide-in-from-top-4 duration-300 ${
+            dbError === 'SCHEMA_NOT_FOUND' 
+              ? 'bg-amber-50/70 border-amber-200/60 text-amber-950' 
+              : dbError 
+                ? 'bg-rose-50/70 border-rose-200/60 text-rose-950'
+                : 'bg-indigo-50/70 border-indigo-200/60 text-indigo-950'
+          }`}>
+            <div className="flex items-center gap-2.5">
+              <span className="relative flex h-2 w-2 shrink-0">
+                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                  dbError ? 'bg-amber-500' : 'bg-indigo-500'
+                }`}></span>
+                <span className={`relative inline-flex rounded-full h-2 w-2 ${
+                  dbError ? 'bg-amber-600' : 'bg-indigo-600'
+                }`}></span>
+              </span>
+              <div>
+                <p className="font-bold uppercase tracking-wider text-[9px] text-slate-500">
+                  {dbError ? 'Sincronização do Banco de Dados' : 'Nuvem Conectada'}
+                </p>
+                <p className="mt-0.5 font-medium leading-relaxed">
+                  {isSyncing && 'Sincronizando seus dados financeiros com o Supabase em tempo real...'}
+                  {dbError === 'SCHEMA_NOT_FOUND' && 'Tabelas do banco de dados não encontradas no Supabase. Os dados estão temporariamente em cache local.'}
+                  {dbError && dbError !== 'SCHEMA_NOT_FOUND' && `Falha na sincronização: ${dbError}. Seus dados estão salvos em cache local.`}
+                </p>
+              </div>
+            </div>
+            {dbError === 'SCHEMA_NOT_FOUND' && (
+              <button
+                onClick={() => setShowSqlModal(true)}
+                className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[10px] font-black uppercase tracking-wider transition duration-150 cursor-pointer shadow-sm shrink-0"
+              >
+                Configurar Tabelas SQL
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Universal Subtitle / Quick commands line */}
         <section className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
@@ -970,6 +1015,184 @@ export default function App() {
           onConfirm={handlePayCardStatement}
           onClose={() => setActivePayCard(null)}
         />
+      )}
+
+      {/* SQL Setup Modal for Supabase */}
+      {showSqlModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-[999] animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col shadow-2xl border border-slate-100 animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-xs font-black uppercase tracking-widest text-slate-800">
+                  Configuração de Banco de Dados Supabase
+                </h3>
+                <p className="text-[10px] text-slate-500 mt-0.5">
+                  Crie as tabelas necessárias para ativar a sincronização em nuvem.
+                </p>
+              </div>
+              <button
+                onClick={() => { setShowSqlModal(false); setCopiedSql(false); }}
+                className="text-slate-400 hover:text-slate-650 text-xs font-bold uppercase tracking-widest cursor-pointer focus:outline-hidden"
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-4 flex-1 text-xs text-slate-600">
+              <p>
+                Para habilitar o salvamento em tempo real no Supabase, você precisa criar a estrutura do banco de dados (tabelas e regras de segurança). Siga os passos abaixo:
+              </p>
+              <ol className="list-decimal pl-5 space-y-2">
+                <li>Acesse o painel do seu projeto no <a href="https://supabase.com" target="_blank" rel="noopener noreferrer" className="text-indigo-600 font-bold underline">Supabase</a>.</li>
+                <li>Clique em <strong>SQL Editor</strong> no menu lateral esquerdo.</li>
+                <li>Clique em <strong>New Query</strong> para criar uma nova aba.</li>
+                <li>Copie o script SQL abaixo, cole no editor e clique em <strong>Run</strong> (ou pressione Ctrl+Enter).</li>
+              </ol>
+
+              <div className="relative rounded-2xl bg-slate-900 text-slate-100 p-4 font-mono text-[10px] overflow-x-auto max-h-60 leading-relaxed border border-slate-950">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(`-- SQL Script to set up database tables in Supabase for Organize.io
+-- Enable UUID extension if not already enabled
+create extension if not exists "uuid-ossp";
+
+-- 1. Create bank_accounts table
+create table if not exists public.bank_accounts (
+  id text primary key,
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  name text not null,
+  "bankName" text not null,
+  type text not null,
+  "initialBalance" numeric not null,
+  color text not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table public.bank_accounts enable row level security;
+create policy "Users can manage their own bank accounts" on public.bank_accounts
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- 2. Create credit_cards table
+create table if not exists public.credit_cards (
+  id text primary key,
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  name text not null,
+  "bankName" text not null,
+  "limit" numeric not null,
+  "closingDay" integer not null,
+  "dueDay" integer not null,
+  color text not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table public.credit_cards enable row level security;
+create policy "Users can manage their own credit cards" on public.credit_cards
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- 3. Create loans table
+create table if not exists public.loans (
+  id text primary key,
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  name text not null,
+  lender text not null,
+  "totalAmount" numeric not null,
+  "interestRate" numeric,
+  "startDate" text not null,
+  "installmentsTotal" integer not null,
+  "installmentsPaid" integer not null,
+  "monthlyPayment" numeric not null,
+  "bankAccountId" text not null,
+  notes text,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table public.loans enable row level security;
+create policy "Users can manage their own loans" on public.loans
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- 4. Create transactions table
+create table if not exists public.transactions (
+  id text primary key,
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  description text not null,
+  amount numeric not null,
+  type text not null,
+  date text not null,
+  "categoryId" text not null,
+  "paymentMethod" text not null,
+  "bankAccountId" text,
+  "creditCardId" text,
+  "loanId" text,
+  status text not null,
+  notes text,
+  "isInstallmentPayment" boolean,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table public.transactions enable row level security;
+create policy "Users can manage their own transactions" on public.transactions
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- 5. Create monthly_goals table
+create table if not exists public.monthly_goals (
+  id text primary key,
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  month text not null,
+  "targetAmount" numeric not null,
+  "incomeTarget" numeric,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table public.monthly_goals enable row level security;
+create policy "Users can manage their own monthly goals" on public.monthly_goals
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- 6. Create category_budgets table
+create table if not exists public.category_budgets (
+  id text primary key,
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  "categoryId" text not null,
+  "limitAmount" numeric not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table public.category_budgets enable row level security;
+create policy "Users can manage their own category budgets" on public.category_budgets
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- 7. Create user_profiles table
+create table if not exists public.user_profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  name text not null,
+  currency text not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table public.user_profiles enable row level security;
+create policy "Users can manage their own profile" on public.user_profiles
+  for all using (auth.uid() = id) with check (auth.uid() = id);`);
+                    setCopiedSql(true);
+                    setTimeout(() => setCopiedSql(false), 2000);
+                  }}
+                  className="absolute top-3.5 right-3.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white font-sans text-[9px] font-black uppercase tracking-wider rounded-lg transition cursor-pointer"
+                >
+                  {copiedSql ? 'Copiado!' : 'Copiar Script SQL'}
+                </button>
+                <pre className="overflow-x-auto max-h-52">{`-- Clique no botão acima para copiar o script completo
+-- Ele criará as 7 tabelas com RLS (Segurança de Linha) no seu banco Supabase.`}</pre>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end">
+              <button
+                onClick={() => { setShowSqlModal(false); setCopiedSql(false); }}
+                className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition cursor-pointer shadow-md shadow-neutral-900/10"
+              >
+                Entendi, Já Concluí
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>
